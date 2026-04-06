@@ -218,6 +218,21 @@ def download_file(service, file_id: str, dest_path: str, progress_cb=None):
                 progress_cb(status.progress())
 
 
+def create_subfolder(service, parent_id: str, name: str) -> str:
+    """Create a subfolder inside a Drive folder. Returns the new folder's ID."""
+    meta = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    folder = service.files().create(
+        body=meta,
+        fields="id",
+        supportsAllDrives=True,
+    ).execute()
+    return folder["id"]
+
+
 def upload_file(service, local_path: str, folder_id: str, filename: str) -> str:
     meta = {"name": filename, "parents": [folder_id]}
     media = MediaFileUpload(local_path, resumable=True, chunksize=8 * 1024 * 1024)
@@ -777,6 +792,18 @@ def render_main():
             label=f"Found {len(files)} file(s). Starting pipeline…", state="running"
         )
 
+    # ── Create timestamped output subfolder ───────────────────
+    upload_folder_id = output_id
+    if upload_to_drive and output_id:
+        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        with st.status(f"📁 Creating output subfolder `{ts}`…", expanded=False) as sf:
+            try:
+                upload_folder_id = create_subfolder(service, output_id, ts)
+                sf.update(label=f"✅ Output subfolder created: `{ts}`", state="complete")
+            except Exception as exc:
+                sf.update(label=f"⚠️ Could not create subfolder: {exc}", state="error")
+                upload_folder_id = output_id  # fallback to root
+
     # ── Step 2: Process ────────────────────────────────────────
     overall_bar = st.progress(0, text="Overall progress")
     all_results = []
@@ -870,13 +897,13 @@ def render_main():
 
                 # Upload
                 gdrive_url = ""
-                if upload_to_drive and output_id:
+                if upload_to_drive and upload_folder_id:
                     with st.status(
                         f"⬆ Uploading `{out_name}`…", expanded=False
                     ) as up_s:
                         try:
                             gdrive_url = upload_file(
-                                service, output_path, output_id, out_name
+                                service, output_path, upload_folder_id, out_name
                             )
                             up_s.update(
                                 label=f"✅ Uploaded `{out_name}`", state="complete"
